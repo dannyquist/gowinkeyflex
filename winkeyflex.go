@@ -3,17 +3,23 @@ package main
 import (
 	"flag"
 	"fmt"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 	"go.bug.st/serial"
+	"image/color"
 	"log"
+	"os"
 	"strconv"
 	"time"
 )
 
-const OPEN_CMD = "\x00\x02"
-
 type K1elMessage struct {
 	status string
 	msg    string
+	src    string
 }
 
 func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
@@ -70,7 +76,7 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 	version := int(buf[0])
 
-	retChan <- K1elMessage{status: "version", msg: fmt.Sprintf("%d", version)}
+	retChan <- K1elMessage{status: "version", msg: fmt.Sprintf("%d", version), src: "winkeyer"}
 	log.Printf("K1EL Version: %d", version)
 
 	// Enable echo
@@ -112,12 +118,12 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 			status := wk & 0x3f
 
 			if status == 8 {
-				retChan <- K1elMessage{status: "ready"}
+				retChan <- K1elMessage{status: "ready", src: "winkeyer"}
 			} else if status == 6 { // Keying started
 				recv = ""
-				retChan <- K1elMessage{status: "keystart"}
+				retChan <- K1elMessage{status: "keystart", src: "winkeyer"}
 			} else if status == 4 { // Keying stopped
-				retChan <- K1elMessage{status: "keystop", msg: recv}
+				retChan <- K1elMessage{status: "keystop", msg: recv, src: "winkeyer"}
 				recv = ""
 			} else if status == 0 {
 				// buffer ready
@@ -127,10 +133,10 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 		} else if (wk & 0xc0) == 0x80 {
 			speed := wk & 0x3f
-			retChan <- K1elMessage{status: "pot", msg: fmt.Sprintf("%d", speed)}
+			retChan <- K1elMessage{status: "pot", msg: fmt.Sprintf("%d", speed), src: "winkeyer"}
 		} else {
 			//fmt.Printf("%c", wkbyte[0])
-			retChan <- K1elMessage{status: "echo", msg: fmt.Sprintf("%c", wkbyte[0])}
+			retChan <- K1elMessage{status: "echo", msg: fmt.Sprintf("%c", wkbyte[0]), src: "winkeyer"}
 			recv = fmt.Sprintf("%s%c", recv, wkbyte[0])
 		}
 
@@ -138,7 +144,7 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 }
 
-func flexSerialWriter(PortName string, retChan <-chan K1elMessage, doneChan chan<- string) {
+func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan<- K1elMessage, doneChan chan<- string) {
 	//serialOptions := serial.OpenOptions{
 	//	PortName:        "/dev/ttyUSB0",
 	//	BaudRate:        1200,
@@ -190,10 +196,11 @@ func flexSerialWriter(PortName string, retChan <-chan K1elMessage, doneChan chan
 
 	version := int(buf[0])
 
-	//retChan <- K1elMessage{status: "version", msg: fmt.Sprintf("%d", version)}
+	//k1elChan <- K1elMessage{status: "version", msg: fmt.Sprintf("%d", version)}
+	retChan <- K1elMessage{status: "version", msg: fmt.Sprintf("%d", version), src: "flex"}
 	log.Printf("Flex Version: %d", version)
 
-	for msg := range retChan {
+	for msg := range k1elChan {
 		switch msg.status {
 		case "echo":
 			_, err := port.Write([]byte(msg.msg))
@@ -217,9 +224,12 @@ func flexSerialWriter(PortName string, retChan <-chan K1elMessage, doneChan chan
 			if err != nil {
 				log.Fatalf("Could not write to flex keyer: %v", err)
 			}
-
+			break
+		default:
+			break
 		}
 
+		retChan <- msg
 	}
 	doneChan <- "done"
 }
@@ -232,10 +242,40 @@ func main() {
 
 	flag.Parse()
 
+	myApp := app.New()
+	myWindow := myApp.NewWindow("Box Layout")
+
+	flexCard := widget.NewCard("Flex", flexComPort, canvas.NewText("STATUS GOES HERE", color.White))
+	winkeyCard := widget.NewCard("WinKeyer", k1elComPort, canvas.NewText("STATUS GOES HERE", color.White))
+	content := container.New(layout.NewHBoxLayout(), flexCard, layout.NewSpacer(), winkeyCard)
+
+	centered := container.New(layout.NewHBoxLayout(), layout.NewSpacer())
+	myWindow.SetContent(container.New(layout.NewVBoxLayout(), content, centered))
+
+	//go func() {
+	//	time.Sleep(5 * time.Second)
+	//	println("Trying to update content...")
+	//	flexCard.SetContent(canvas.NewText("BOINK", color.White))
+	//}()
+
 	retChan := make(chan K1elMessage, 10)
 	doneChan := make(chan string, 1)
-	go k1elSerialReader(k1elComPort, retChan)
-	go flexSerialWriter(flexComPort, retChan, doneChan)
+	guiChan := make(chan K1elMessage, 100)
 
-	<-doneChan
+	go k1elSerialReader(k1elComPort, retChan)
+	go flexSerialWriter(flexComPort, retChan, guiChan, doneChan)
+	go func() {
+		for msg := range guiChan {
+			println("%s: %s (%s)", msg.status, msg.msg, msg.src)
+			if msg.src == "winkeyer" {
+				winkeyCard.SetContent(canvas.NewText(msg.status, color.White))
+			} else if msg.src == "flex" {
+				flexCard.SetContent(canvas.NewText(msg.status, color.White))
+			}
+		}
+	}()
+
+	myWindow.ShowAndRun()
+	//<-doneChan
+	os.Exit(0)
 }
