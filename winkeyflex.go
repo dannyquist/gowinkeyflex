@@ -13,7 +13,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"time"
 )
 
 type K1elMessage struct {
@@ -21,6 +20,21 @@ type K1elMessage struct {
 	msg    string
 	src    string
 }
+
+//const OPEN_CMD = "\x00\x02"
+//const CLOSE_CMD = "\x00\x03"
+//const CONFIG_ENABLE_ECHO_CMD = "\x0e\x40"
+//const SET_SPEED_TO_POT_CMD = "\x02\x00"
+//const GET_POT_SPEED_CMD = "\x07"
+
+const STATUS_BITMASK = 0x3f
+const STATUS_READY = 8
+const STATUS_KEYSTART = 6
+const STATUS_KEYSTOP = 4
+const STATUS_BUFFER_READY = 0
+const STATUS_MASK = 0xc0
+const STATUS_TYPE_STATUS = 0xc0
+const STATUS_TYPE_POT = 0x80
 
 func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
@@ -33,6 +47,11 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 	//	MinimumReadSize: 4,
 	//}
 
+	if len(PortName) == 0 {
+		retChan <- K1elMessage{status: "serial", msg: "invalid port", src: "winkeyer"}
+		return
+	}
+
 	mode := &serial.Mode{
 		BaudRate: 1200,
 		DataBits: 8,
@@ -44,7 +63,8 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 	port, err := serial.Open(PortName, mode)
 	if err != nil {
-		log.Fatalf("serial.Open: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+		return
 	}
 
 	defer func() {
@@ -57,21 +77,25 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 		err = port.Close()
 		if err != nil {
 			log.Println("Error closing port", err)
+			return
 		}
 	}()
 
 	_, err = port.Write([]byte{0x00, 0x02}) // Open cmd
 	if err != nil {
-		log.Fatalf("Could not initialize K1EL keyer: %v", err)
+		log.Printf("error writing to serial: %v")
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+		return
 	}
-	time.Sleep(1 * time.Second)
 
 	// get the version
 	buf := []byte{0x00}
 
 	_, err = port.Read(buf)
 	if err != nil {
-		log.Fatalf("Error reading version: %v", err)
+		log.Printf("Error reading version: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+		return
 	}
 
 	version := int(buf[0])
@@ -82,20 +106,22 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 	// Enable echo
 	_, err = port.Write([]byte{0x0e, 0x40})
 	if err != nil {
-		log.Fatalf("Error writing to serial port: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+		return
 	}
 
 	// Use the speed pot for all wpm settings
 
 	_, err = port.Write([]byte{0x02, 0x00})
 	if err != nil {
-		log.Fatal(err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+		return
 	}
 
 	// Make pot speed request
 	_, err = port.Write([]byte{0x07})
 	if err != nil {
-		log.Fatalf("Could not write to serial port: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
 	}
 
 	recv := ""
@@ -105,7 +131,8 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 		bytesRead, err := port.Read(wkbyte)
 		if err != nil {
-			log.Fatalf("Could not read from serial port: %v", err)
+			retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+			return
 		}
 
 		if bytesRead == 0 {
@@ -114,25 +141,25 @@ func k1elSerialReader(PortName string, retChan chan<- K1elMessage) {
 
 		wk := int(wkbyte[0])
 
-		if (wk & 0xc0) == 0xc0 {
-			status := wk & 0x3f
+		if (wk & STATUS_MASK) == STATUS_TYPE_STATUS {
+			status := wk & STATUS_BITMASK
 
-			if status == 8 {
+			if status == STATUS_READY {
 				retChan <- K1elMessage{status: "ready", src: "winkeyer"}
-			} else if status == 6 { // Keying started
+			} else if status == STATUS_KEYSTART { // Keying started
 				recv = ""
 				retChan <- K1elMessage{status: "keystart", src: "winkeyer"}
-			} else if status == 4 { // Keying stopped
+			} else if status == STATUS_KEYSTOP { // Keying stopped
 				retChan <- K1elMessage{status: "keystop", msg: recv, src: "winkeyer"}
 				recv = ""
-			} else if status == 0 {
+			} else if status == STATUS_BUFFER_READY {
 				// buffer ready
 			} else {
 				fmt.Printf("Unknown status byte received: %x", status)
 			}
 
-		} else if (wk & 0xc0) == 0x80 {
-			speed := wk & 0x3f
+		} else if (wk & STATUS_MASK) == STATUS_TYPE_POT {
+			speed := wk & STATUS_BITMASK
 			retChan <- K1elMessage{status: "pot", msg: fmt.Sprintf("%d", speed), src: "winkeyer"}
 		} else {
 			//fmt.Printf("%c", wkbyte[0])
@@ -154,6 +181,11 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 	//	MinimumReadSize: 4,
 	//}
 
+	if len(PortName) == 0 {
+		retChan <- K1elMessage{status: "serial", msg: "invalid port name", src: "flex"}
+		return
+	}
+
 	mode := &serial.Mode{
 		BaudRate: 1200,
 		DataBits: 8,
@@ -165,7 +197,8 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 
 	port, err := serial.Open(PortName, mode)
 	if err != nil {
-		log.Fatalf("Flex serial.Open: %v", err)
+		log.Printf("Flex serial.Open: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "flex"}
 	}
 
 	defer func() {
@@ -178,12 +211,13 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 		err = port.Close()
 		if err != nil {
 			log.Println("Error closing port", err)
+			return
 		}
 	}()
 
 	_, err = port.Write([]byte{0x00, 0x02}) // Open cmd
 	if err != nil {
-		log.Fatalf("Could not initialize K1EL keyer: %v", err)
+		log.Printf("Could not initialize flex keyer: %v", err)
 	}
 
 	// get the version
@@ -191,7 +225,8 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 
 	_, err = port.Read(buf)
 	if err != nil {
-		log.Fatalf("Error reading version: %v", err)
+		log.Printf("Error reading version: %v", err)
+		retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "flex"}
 	}
 
 	version := int(buf[0])
@@ -205,7 +240,8 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 		case "echo":
 			_, err := port.Write([]byte(msg.msg))
 			if err != nil {
-				log.Fatalf("Could not write to flex serial: %v", err)
+				retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+				return
 			}
 			break
 		case "pot":
@@ -222,7 +258,8 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 
 			_, err = port.Write(cmd)
 			if err != nil {
-				log.Fatalf("Could not write to flex keyer: %v", err)
+				retChan <- K1elMessage{status: "serial", msg: fmt.Sprintf("error: %v", err), src: "winkeyer"}
+				return
 			}
 			break
 		default:
@@ -235,39 +272,81 @@ func flexSerialWriter(PortName string, k1elChan <-chan K1elMessage, retChan chan
 }
 
 func main() {
-	var k1elComPort string
-	var flexComPort string
-	flag.StringVar(&k1elComPort, "k1el", "COM3", "COM port for K1EL WinKeyer")
-	flag.StringVar(&flexComPort, "flex", "COM11", "COM port for FlexRadio WinKeyer")
+
+	var flagWinkeyComPort string
+	var flagFlexComPort string
+	flag.StringVar(&flagWinkeyComPort, "winkey", "", "COM port for Hardware WinKeyer")
+	flag.StringVar(&flagFlexComPort, "flex", "", "COM port for FlexRadio WinKeyer")
 
 	flag.Parse()
 
-	myApp := app.New()
-	myWindow := myApp.NewWindow("Box Layout")
+	println("command line:", flagWinkeyComPort)
+	println("command line:", flagFlexComPort)
 
-	flexCard := widget.NewCard("Flex", flexComPort, canvas.NewText("STATUS GOES HERE", color.White))
-	winkeyCard := widget.NewCard("WinKeyer", k1elComPort, canvas.NewText("STATUS GOES HERE", color.White))
+	myApp := app.NewWithID("com.k1hyl.gowinkeyflex")
+
+	configWinkeyComPort := myApp.Preferences().String("winkey_com_port")
+	configFlexComPort := myApp.Preferences().String("flex_com_port")
+
+	println("Preferences (winkey):", configWinkeyComPort)
+	println("Preferences (flex):", configFlexComPort)
+
+	var flexComPort string
+	var winkeyComPort string
+
+	// flags win priority
+	if len(flagWinkeyComPort) > 0 {
+		winkeyComPort = flagWinkeyComPort
+	} else if len(configWinkeyComPort) > 0 {
+		winkeyComPort = configWinkeyComPort
+	}
+
+	if len(flagFlexComPort) > 0 {
+		flexComPort = flagFlexComPort
+	} else if len(configWinkeyComPort) > 0 {
+		flexComPort = configFlexComPort
+	}
+
+	if len(flexComPort) == 0 || len(winkeyComPort) == 0 {
+		log.Printf("No configured serial port, getting list")
+		comPorts, err := serial.GetPortsList()
+		if err != nil {
+			log.Printf("Could not get list of serial ports")
+			return
+		}
+
+		for port := range comPorts {
+			println(port)
+		}
+	}
+
+	myWindow := myApp.NewWindow("gowinkeyer by K1HYL")
+
+	flexCard := widget.NewCard("Flex", flexComPort, canvas.NewText("...", color.White))
+	winkeyCard := widget.NewCard("WinKeyer", winkeyComPort, canvas.NewText("...", color.White))
 	content := container.New(layout.NewHBoxLayout(), flexCard, layout.NewSpacer(), winkeyCard)
 
 	centered := container.New(layout.NewHBoxLayout(), layout.NewSpacer())
 	myWindow.SetContent(container.New(layout.NewVBoxLayout(), content, centered))
 
-	//go func() {
-	//	time.Sleep(5 * time.Second)
-	//	println("Trying to update content...")
-	//	flexCard.SetContent(canvas.NewText("BOINK", color.White))
-	//}()
-
 	retChan := make(chan K1elMessage, 10)
 	doneChan := make(chan string, 1)
 	guiChan := make(chan K1elMessage, 100)
 
-	go k1elSerialReader(k1elComPort, retChan)
-	go flexSerialWriter(flexComPort, retChan, guiChan, doneChan)
+	if len(winkeyComPort) > 0 {
+		go k1elSerialReader(winkeyComPort, retChan)
+	}
+
+	if len(flexComPort) > 0 {
+		go flexSerialWriter(flexComPort, retChan, guiChan, doneChan)
+	}
+
 	go func() {
 		for msg := range guiChan {
-			println("%s: %s (%s)", msg.status, msg.msg, msg.src)
-			if msg.src == "winkeyer" {
+			fmt.Printf("%s: %s (%s)", msg.status, msg.msg, msg.src)
+			if msg.status == "serial" {
+				println("Received serial error, popping config", msg.msg, msg.src)
+			} else if msg.src == "winkeyer" {
 				winkeyCard.SetContent(canvas.NewText(msg.status, color.White))
 			} else if msg.src == "flex" {
 				flexCard.SetContent(canvas.NewText(msg.status, color.White))
