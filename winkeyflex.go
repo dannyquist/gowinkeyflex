@@ -30,6 +30,8 @@ type K1elMessage struct {
 //const SET_SPEED_TO_POT_CMD = "\x02\x00"
 //const GET_POT_SPEED_CMD = "\x07"
 
+const APP_VERSION = "0.0.2a"
+
 type AppSettings struct {
 	WinkeyPort string `json:"winkey_port"`
 	FlexPort   string `json:"flex_port"`
@@ -92,7 +94,7 @@ func main() {
 		comPorts = append(comPorts, port)
 	}
 
-	myWindow := myApp.NewWindow("gowinkeyer by K1HYL")
+	myWindow := myApp.NewWindow(fmt.Sprintf("gowinkeyer %s", APP_VERSION))
 
 	flexCard := widget.NewCard("Flex", flexComPort, canvas.NewText("...", color.Black))
 	winkeyCard := widget.NewCard("WinKeyer", winkeyComPort, canvas.NewText("...", color.Black))
@@ -125,14 +127,6 @@ func main() {
 						WriteConfig(configFile, &settings)
 					})))
 
-			//configContainer := container.New(
-			//	layout.NewHBoxLayout(),
-			//	canvas.NewText("Flex Serial Port", color.Black),
-			//	widget.NewSelect(comPorts, func(value string) {
-			//		log.Printf("Selected %s", value)
-			//	}),
-			//)
-
 			configWindow.SetContent(configContainer)
 
 			configWindow.Show()
@@ -145,7 +139,10 @@ func main() {
 
 	logArea := widget.NewMultiLineEntry()
 	logArea.Disable()
-	logArea.SetText("Welcome to gowinkeyflex by K1HYL\nPress the config button if needed")
+	logArea.SetText("Welcome to gowinkeyflex by K1HYL\n")
+	if len(settings.FlexPort) == 0 || len(settings.WinkeyPort) == 0 {
+		logArea.SetText(logArea.Text + "Press Config to set up ports")
+	}
 
 	myWindow.SetContent(container.New(layout.NewVBoxLayout(), content, logArea))
 
@@ -170,7 +167,7 @@ func main() {
 				}
 				break
 			default:
-				log.Printf("Unknown status message: %s", msg.status)
+				//log.Printf("Unknown status message: %s", msg.status)
 			}
 
 			if msg.src == "winkeyer" {
