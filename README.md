@@ -1,7 +1,52 @@
 # gowinkeyflex
 
-Small utility to relay CW commands received by a K1EL WinKeyer and send to a FlexRadio Winkeyer COM port interface. 
-Currently it is only a command line, a GUI will be forthcoming for the keyboard averse.
+Small utility to relay CW commands received by a K1EL WinKeyer and send to a FlexRadio Winkeyer COM port interface.
+
+# Installation
+
+Click the releases section on the right, and download the latest version. Then double-click the `gowinkeyflex.exe` 
+to run.
+
+![img.png](images/app-not-configured.png)
+
+Configuration is done by clicking the `Config` button. You will need to set up your serial ports here.
+Select the appropriate values. Remember to create a new Winkey port in SmartSDR CAT. You may choose any
+available unused COM port, just make a note of it.
+
+![img.png](images/smart-sdr-cat.png)
+
+Next configure your WinKeyer port. If you don't know which one it is, you can use the vendor provided
+[WinKeyer Com Port Scanner 2.0](https://www.k1elsystems.com/WKscan.html) 
+
+![img.png](images/wk_scan.png)
+
+I'm using a WKUSB-AF as my winkeyer device, which shows up as WKduo 31.3, or COM7.
+
+Finally, make your config match the configuration from above.
+
+![img.png](images/config_filled.png)
+
+Close the Config Window, then close the application. Restart `gowinkeyflex.exe` and you are ready.
+
+# Usage
+
+Execute `gowinkeyflex.exe` by double-clicking the icon. Verify your COM ports match the items you 
+configured above. Click start to continue
+
+![img_1.png](images/img_1.png)
+
+You now should be able to relay CW from your local Winkeyer to your Flexradio. Changing the speed 
+knob on the front of the keyer will change your speed on the Flex to match. Characters entered on your 
+paddle will now be relayed to your Flex.
+
+![img.png](images/working-action-shot.png)
+
+# Troubleshooting
+
+If your radio does not key and transmit, verify your settings for your Flex Radio Winkeyer. In 
+SmartSDR, make sure the radio is in CW mode and on a clear frequency. 
+
+Timing is still a bit squirly, and I'm looking into ways of addressing it. 
 
 # Dependencies
 
@@ -29,28 +74,6 @@ Build the executable
 ```powershell
 go build .
 ```
-
-# Running
-
-Execute the command line with your configured serial ports. My K1EL WinKeyer is running on COM3 
-and I have configured my FlexRadio to have a WinKeyer interface on COM11.
-
-```powershell
-gowinkeyflex.exe -k1el=COM3 -flex=COM11
-```
-
-If everything works, you should see text like this:
-
-```
-2022/07/07 22:19:18 Opening Flex serial port COM11
-2022/07/07 22:19:18 Opening Winkeyer serial port COM3
-2022/07/07 22:19:18 Flex Version: 10
-2022/07/07 22:19:19 K1EL Version: 31
-Speed change: 10
-```
-
-You may now use your paddle connected to the WinKeyer. Set SmartSDR to CW, and select an appropriate testing frequency. 
-Any changes to the speed knob on the K1EL keyer will be relayed to the FlexRadio.
 
 # Contributing
 
