@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	fyne.io/fyne/v2 v2.2.2
+	github.com/kirsle/configdir v0.0.0-20170128060238-e45d2f54772f
 	go.bug.st/serial v1.3.5
 )
 
