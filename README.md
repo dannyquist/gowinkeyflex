@@ -50,7 +50,7 @@ Timing is still a bit squirly, and I'm looking into ways of addressing it.
 
 # Dependencies
 
-* [Go 1.18](https://go.dev/dl/)
+* [Go 1.x latest](https://go.dev/dl/)
 * [git command line tools](https://gitforwindows.org/)
 
 All commands to be executed in PowerShell.
@@ -72,8 +72,12 @@ go get -v .
 Build the executable
 
 ```powershell
-go build .
+go build -buildvcs=false .
 ```
+
+# Changelog
+
+31 December 2024 - removed go.mod
 
 # Contributing
 
